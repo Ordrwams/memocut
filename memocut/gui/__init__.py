@@ -1,6 +1,6 @@
 """GUI MemoCut (етап 2, PySide6). Запуск: `python app.py` або `python -m memocut.gui`.
 
-Сторінки: start_page (ТЗ) → progress_page (монтаж) → gallery (прев'ю варіацій).
+Сторінки: brief_page (ТЗ: форма + YAML) → progress_page (монтаж) → gallery (прев'ю варіацій).
 Уся логіка — у core/project.py та core/edit.py; GUI лише викликає їх у фоновому потоці.
 """
 from __future__ import annotations
@@ -14,6 +14,14 @@ QWidget { font-size: 10pt; color: #1d1b19; }
 QMainWindow, QStackedWidget > QWidget { background: #f6f3ef; }
 QLabel#h1 { font-size: 20pt; font-weight: 700; }
 QLabel#h2 { font-size: 13pt; font-weight: 600; }
+QLabel#h3 { font-weight: 600; color: #8a3b1c; }
+QFrame#scene { background: #fbf8f5; border: 1px solid #ece5dd; border-radius: 8px; }
+QWidget#formBody { background: transparent; }
+QTabWidget::pane { border: none; }
+QTabBar::tab { padding: 8px 18px; background: #ece5dd; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; }
+QTabBar::tab:selected { background: #ffffff; font-weight: 600; }
+QLineEdit { background: #ffffff; border: 1px solid #d6cec5; border-radius: 6px; padding: 5px; }
+QDoubleSpinBox { background: #ffffff; border: 1px solid #d6cec5; border-radius: 6px; padding: 3px; }
 QLabel#muted { color: #6f6861; }
 QLabel#small { color: #4a4540; font-size: 9pt; }
 QLabel#error { color: #b3261e; }

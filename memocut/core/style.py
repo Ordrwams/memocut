@@ -21,6 +21,11 @@ DEFAULT = {
         "outline_color": "#000000", "outline": 4, "shadow": 1, "position": "bottom",
         "margin_v": 380, "words_per_line": 4, "karaoke": True, "uppercase": False,
     },
+    "overlay": {  # текст упродовж усього відео (ТЗ: overlay)
+        "size": 46, "bold": True, "color": "#FFFFFF", "outline_color": "#000000",
+        "outline": 3, "shadow": 1, "position": "top", "margin_v": 110,
+        "box": True, "box_color": "#000000",
+    },
     "end_card": {"background": "#111111", "color": "#FFFFFF", "size": 78, "duration": 2.5},
     "video": {"fps": 30, "fade_between": 0.0},
 }

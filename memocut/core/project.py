@@ -15,7 +15,8 @@ from typing import Callable, Optional
 from ..analyze.catalog import analyze
 from ..planner.base import get_planner
 from ..render.engine import Renderer
-from .brief import load_brief
+from .brief import BriefError, load_brief
+from .library import GameFolder
 from .edit import save_revision
 from .models import Catalog, Plan
 
@@ -24,6 +25,23 @@ Progress = Callable[[str, float], None]
 
 def safe_name(s: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', "_", s).strip() or "project"
+
+
+def resolve_game_clips(brief) -> None:
+    """clip: LUB-UA-041 (ID з КАТАЛОГ.csv) -> шлях файлу відносно source_dir."""
+    game = GameFolder.detect(brief.source_path())
+    if not game:
+        return
+    src = brief.source_path()
+    for s in brief.slots:
+        if s.clip:
+            rel = game.resolve_clip(s.clip)
+            if rel != s.clip:
+                full = game.root / rel
+                try:
+                    s.clip = full.relative_to(src).as_posix()
+                except ValueError:
+                    raise BriefError(f"Файл {s.clip} ({rel}) лежить поза папкою {src}") from None
 
 
 def generate(brief_path: str | Path, out_dir: str | Path | None = None, *, preview: bool = True,
@@ -37,7 +55,8 @@ def generate(brief_path: str | Path, out_dir: str | Path | None = None, *, previ
         brief.style = style
     if variations:
         brief.variations = int(variations)
-    catalog = analyze(brief.source_path(), transcripts=transcripts,
+    resolve_game_clips(brief)
+    catalog = analyze(brief.source_path(), transcripts=transcripts, folders=brief.folders,
                       progress=lambda m, f: say(m, f * 0.4))
     plans = get_planner(planner).make_plans(brief, catalog)
     root = Path(out_dir) if out_dir else Path(brief_path).parent / "output"

@@ -62,14 +62,20 @@ def _whisper(path: Path) -> list[dict]:
     return out
 
 
-def words_for(video: Path, whisper: bool = True) -> list[dict]:
+def words_for(video: Path, whisper: bool = True, timed_txt: Path | None = None,
+              known_empty: bool = False) -> list[dict]:
+    """timed_txt — транскрипт із папки гри (`тексти/<ID>.txt`); known_empty — транскрипт уже робили,
+    мови немає (порожній файл), тож Whisper не запускаємо."""
     side = video.with_suffix(".words.json")
     if side.exists():
         return json.loads(side.read_text(encoding="utf-8"))
     srt = video.with_suffix(".srt")
     if srt.exists():
         return _from_srt(srt)
-    if not whisper:
+    if timed_txt is not None:
+        from ..core.library import words_from_timed_txt
+        return words_from_timed_txt(timed_txt)
+    if not whisper or known_empty:
         return []
     try:
         return _whisper(video)

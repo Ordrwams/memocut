@@ -14,6 +14,7 @@ from typing import Callable, Optional
 from ..core import paths
 from ..core.models import Catalog, ClipInfo, Word
 from ..core.proc import run
+from ..core.library import GameFolder, skip_dir
 from . import transcribe
 
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts"}
@@ -106,23 +107,39 @@ def make_thumb(path: Path, out: Path, at: float) -> None:
          "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", str(out)])
 
 
-def list_videos(source: Path) -> list[Path]:
-    return sorted(p for p in source.rglob("*")
-                  if p.suffix.lower() in VIDEO_EXT and CACHE_DIRNAME not in p.parts)
+def list_videos(source: Path, folders: Optional[list[str]] = None, game: Optional[GameFolder] = None) -> list[Path]:
+    """Усі відео в source. folders — лише ці підпапки; у папці гри службові/«з текстом» пропускаються."""
+    roots = [source / f for f in folders] if folders else [source]
+    out = []
+    for r in roots:
+        if not r.is_dir():
+            continue
+        for p in r.rglob("*"):
+            if p.suffix.lower() not in VIDEO_EXT or CACHE_DIRNAME in p.parts:
+                continue
+            if game is not None and any(skip_dir(x) for x in p.relative_to(source).parts[:-1]):
+                continue
+            out.append(p)
+    return sorted(set(out))
 
 
-def analyze(source: str | Path, *, transcripts: bool = True,
+def analyze(source: str | Path, *, transcripts: bool = True, folders: Optional[list[str]] = None,
             progress: Optional[Progress] = None) -> Catalog:
+    """folders — підпапки source, з яких брати відео (None = усі)."""
     source = Path(source).resolve()
     if not source.is_dir():
         raise FileNotFoundError(f"Папка не знайдена: {source}")
+    game = GameFolder.detect(source)
+
+    def grel(f: Path) -> str:  # шлях від кореня гри (як у КАТАЛОГ.csv)
+        return f.relative_to(game.root).as_posix() if game else ""
     cdir = cache_dir(source)
     cat_path = cdir / "catalog.json"
     old = Catalog.load(cat_path) if cat_path.exists() else Catalog(str(source))
     thumbs = cdir / "thumbs"
     thumbs.mkdir(exist_ok=True)
 
-    files = list_videos(source)
+    files = list_videos(source, folders, game)
     clips: list[ClipInfo] = []
     say = progress or (lambda m, f: None)
     for i, f in enumerate(files):
@@ -141,15 +158,20 @@ def analyze(source: str | Path, *, transcripts: bool = True,
         if prev and prev.mtime == st.st_mtime and prev.size == st.st_size:
             clip = prev  # бракує лише транскрипту
         else:
-            scenes, silences, bright = detect(f, info["has_audio"], info["duration"])
+            # Проксі 480p з папки гри має ті самі таймкоди, але аналізується в рази швидше.
+            src = (game.proxy(grel(f)) if game else None) or f
+            scenes, silences, bright = detect(src, info["has_audio"], info["duration"])
             thumb = thumbs / (re.sub(r"[^\w.-]", "_", rel) + ".jpg")
-            make_thumb(f, thumb, min(1.0, info["duration"] / 2))
+            make_thumb(src, thumb, min(1.0, info["duration"] / 2))
             clip = ClipInfo(file=rel, mtime=st.st_mtime, size=st.st_size, scenes=scenes,
                             silences=silences, brightness=bright,
                             thumb=thumb.relative_to(source).as_posix(), **info)
         if info["has_audio"] and not clip.words:
             say(f"Транскрипт {rel}", (i + 0.5) / max(1, len(files)))
-            clip.words = [Word(**w) for w in transcribe.words_for(f, whisper=transcripts)]
+            clip.words = [Word(**w) for w in transcribe.words_for(
+                f, whisper=transcripts,
+                timed_txt=game.transcript(grel(f)) if game else None,
+                known_empty=game.has_transcript_file(grel(f)) if game else False)]
         clips.append(clip)
         Catalog(str(source), clips + [c for c in old.clips if c.file not in {x.file for x in clips}]).save(cat_path)
 

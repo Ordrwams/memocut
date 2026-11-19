@@ -50,19 +50,20 @@ class Renderer:
         self.say = progress or (lambda m, f: None)
 
     # ---- один сегмент ----
-    def _key(self, seg: Segment, style: dict, fmt: str, preview: bool) -> str:
+    def _key(self, seg: Segment, style: dict, fmt: str, preview: bool, overlay: str | None = None) -> str:
         clip = self.catalog.get(seg.shot.file)
         payload = {
             "shot": asdict(seg.shot) | {"score": 0, "reason": ""}, "title": seg.title, "sub": seg.subtitles,
-            "style": style, "fmt": fmt, "preview": preview,
+            "style": style, "fmt": fmt, "preview": preview, "overlay": overlay,
             "clip": [clip.mtime, clip.size, [asdict(w) for w in clip.words
                                              if seg.shot.start - 1 < w.s < seg.shot.end + 1]] if clip else None,
-            "v": 3,
+            "v": 4,
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
-    def render_segment(self, seg: Segment, style: dict, fmt: str, preview: bool) -> Path:
-        key = self._key(seg, style, fmt, preview)
+    def render_segment(self, seg: Segment, style: dict, fmt: str, preview: bool,
+                       overlay: str | None = None) -> Path:
+        key = self._key(seg, style, fmt, preview, overlay)
         out = self.cache / f"seg_{key}.mp4"
         if out.exists():
             return out
@@ -72,7 +73,7 @@ class Renderer:
         w, h = out_size(fmt, preview)
         fw, fh = SIZES[fmt]
         ass_name = f"seg_{key}.ass"
-        (self.cache / ass_name).write_text(ass.segment_ass(seg, clip, style, fw, fh), encoding="utf-8")
+        (self.cache / ass_name).write_text(ass.segment_ass(seg, clip, style, fw, fh, overlay), encoding="utf-8")
         dur = seg.shot.duration
         fps = style["video"]["fps"]
         vf = (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,"
@@ -122,7 +123,7 @@ class Renderer:
         n = len(plan.segments) + (1 if plan.cta else 0)
         for i, seg in enumerate(plan.segments):
             self.say(f"Сегмент {i + 1}/{len(plan.segments)}", i / (n + 1))
-            parts.append(self.render_segment(seg, style, plan.format, preview))
+            parts.append(self.render_segment(seg, style, plan.format, preview, plan.overlay))
         if plan.cta:
             self.say("Фінальна картка", len(plan.segments) / (n + 1))
             parts.append(self.render_end_card(plan.cta, style, plan.format, preview))

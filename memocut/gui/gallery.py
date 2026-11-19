@@ -207,7 +207,7 @@ class GalleryPage(QWidget):
         self.title.setObjectName("h1")
         self.sub = QLabel()
         self.sub.setObjectName("muted")
-        back = QPushButton("← Нове ТЗ")
+        back = QPushButton("← До ТЗ")
         back.clicked.connect(self._back)
         self.folder_btn = QPushButton("Відкрити папку результатів")
         self.folder_btn.clicked.connect(lambda: self.root and open_path(self.root))

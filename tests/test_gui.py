@@ -22,31 +22,64 @@ def _plan(i):
                 segments=[Segment("s1", Shot("A.mp4", 0, 2), title="Привіт")])
 
 
-def test_start_page(app, cleanup, settings, tmp_path):
-    from memocut.gui.start_page import StartPage
-    page = StartPage(settings)
+def test_brief_page(app, cleanup, settings, tmp_path):
+    from test_library import make_game
+    from memocut.core.brief import load_brief
+    from memocut.gui.brief_page import BriefPage
+    page = BriefPage(settings)
     cleanup.append(page)
-    (tmp_path / "raw").mkdir()
-    good = tmp_path / "b.yaml"
-    good.write_text("name: Промо\nsource_dir: raw\nstyle: minimal_box\nvariations: 2\n"
-                    "segments:\n - find: привіт\n   title: Хук\n - any: true\n", encoding="utf-8")
-    assert page.load(good)
-    assert page.b_name.text() == "Промо" and page.go.isEnabled()
-    assert page.style_box.currentText() == "minimal_box" and page.var_box.value() == 2
-    assert "«привіт»" in page.b_slots.text()
+    assert len(page.scenes) == 3 and page.validate() == "Виберіть папку з відео (розділ 1)."
+
+    game = make_game(tmp_path / "02. Між Нами")
+    page._set_source(game / "02_Сирі", None)            # вибрали підпапку — знайде корінь гри
+    assert page.source_path() == game.resolve()
+    assert [cb.property("folder") for cb in page.folder_checks if cb.isChecked()] == ["02_Сирі", "04_СММ"]
+    assert "готових транскриптів 1" in page.src_info.text()
+
+    page.name.setText("Промо 1")
+    page.overlay.setText("memogames.ua")
+    h = page.scenes[0]
+    h.kind.setCurrentIndex(1)
+    h.value.setText("подивишся на мене")
+    h.title.setText("Гра | для пар")
+    h.subs.setChecked(False)
+    c = page.scenes[2]
+    c.kind.setCurrentIndex(2)
+    c.value.setText("LUB-UA-999")
+    assert "LUB-UA-999" in page.validate()
+    c.value.setText("lub-ua-001")
+    c.start.setValue(1)
+    c.end.setValue(3)
+    assert page.validate() is None
+
+    d = page.form_data()
+    assert d["segments"][0] == {"find": "подивишся на мене", "title": "Гра\nдля пар", "duration": 3.0,
+                                "subtitles": False}
+    assert d["segments"][2] == {"clip": "lub-ua-001", "start": 1.0, "end": 3.0}
+
+    # вкладка YAML: згенерувати, поправити руками, застосувати до форми
+    page.tabs.setCurrentIndex(1)
+    text = page.yaml.toPlainText()
+    assert "name: 'Промо 1'" in text and "overlay: 'memogames.ua'" in text
+    page.yaml.setPlainText(text.replace("'Промо 1'", "'Промо 2'"))
+    assert page._apply_yaml() and page.name.text() == "Промо 2"
+    page.yaml.setPlainText("segments: [")
+    assert not page._apply_yaml() and "рядок" in page.yaml_status.text()
+    page._yaml_dirty = False
+    page.tabs.setCurrentIndex(0)
+
     got = []
     page.start_requested.connect(lambda p, o: got.append((p, o)))
-    page.go.click()
-    assert got[0][1] == {"style": "minimal_box", "variations": 2, "transcripts": True}
-    assert page.recent.count() == 1
+    page._start()
+    path, opts = got[0]
+    assert path == game.resolve() / "MemoCut" / "ТЗ" / "Промо 2.yaml" and path.is_file()
+    assert opts["out_dir"] == game.resolve() / "MemoCut" / "Результати"
+    b = load_brief(path)
+    assert b.folders == ["02_Сирі", "04_СММ"] and b.overlay == "memogames.ua" and len(b.slots) == 3
 
-    bad = tmp_path / "bad.yaml"
-    bad.write_text("segments: []\n", encoding="utf-8")
-    assert not page.load(bad) and "source_dir" in page.err.text()
-
-    nodir = tmp_path / "nodir.yaml"
-    nodir.write_text("source_dir: nope\nsegments:\n - any: true\n", encoding="utf-8")
-    assert page.load(nodir) and not page.go.isEnabled()
+    page2 = BriefPage(settings)                          # відкрити той самий файл у новій сторінці
+    cleanup.append(page2)
+    assert page2.open_path(path) and page2.form_data()["segments"] == page.form_data()["segments"]
 
 
 def test_list_variations(tmp_path):

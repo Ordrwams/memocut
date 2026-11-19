@@ -215,5 +215,5 @@ class RulesPlanner:
                                     subtitles=slot.subtitles, alternatives=diverse, slot=si))
             plans.append(Plan(name=brief.name, source_dir=str(brief.source_path()), format=brief.format,
                               style=brief.style, segments=segs, variation=v + 1, cta=brief.cta,
-                              music=brief.music, music_volume=brief.music_volume, planner=self.name))
+                              music=brief.music, music_volume=brief.music_volume, overlay=brief.overlay, planner=self.name))
         return plans

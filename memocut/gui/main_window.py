@@ -10,7 +10,7 @@ from .. import __version__
 from ..core import paths
 from .gallery import GalleryPage, load_results
 from .progress_page import ProgressPage
-from .start_page import StartPage
+from .brief_page import BriefPage
 from .workers import Job, generate_job, start_job
 
 
@@ -37,12 +37,12 @@ class MainWindow(QMainWindow):
     def __init__(self, brief: Path | None = None):
         super().__init__()
         self.setWindowTitle(f"MemoCut {__version__}")
-        self.resize(1180, 820)
+        self.resize(1180, 860)
         self.settings = QSettings("MemoGames", "MemoCut")
         self.job: Job | None = None
         self._brief: Path | None = None
 
-        self.start = StartPage(self.settings)
+        self.start = BriefPage(self.settings)
         self.progress = ProgressPage()
         self.gallery = GalleryPage()
         self.stack = QStackedWidget()
@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         if geo := self.settings.value("geometry"):
             self.restoreGeometry(geo)
         if brief:
-            self.start.load(Path(brief))
+            self.start.open_path(Path(brief))
 
     def check_ffmpeg(self) -> bool:
         try:
@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         if self.job or not self.check_ffmpeg():
             return
         self._brief = brief
-        self.progress.begin(f"Монтаж: {self.start.b_name.text() or brief.stem}")
+        self.progress.begin(f"Монтаж: {self.start.current_name()}")
         self.stack.setCurrentWidget(self.progress)
         job = generate_job(brief, **opts)
         job.progress.connect(self.progress.update_progress)
@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
 
     def _generated(self, folders: list[Path]) -> None:
         self.job = None
-        self.gallery.show_results([Path(f) for f in folders], self.start.b_name.text())
+        self.gallery.show_results([Path(f) for f in folders], self.start.current_name())
         self.stack.setCurrentWidget(self.gallery)
 
     def _failed(self, msg: str, tb: str) -> None:
@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
             self.job.cancel()
         self.gallery.stop_all()
         self.gallery.clear()
+        self.start.save_draft()
         self.settings.setValue("geometry", self.saveGeometry())
         # Даємо фоновим задачам кілька секунд зупинитися; ffmpeg, що працює, не чекаємо.
         if any(not _wait(j, 3000) for j in jobs):

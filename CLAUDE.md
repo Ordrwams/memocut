@@ -10,16 +10,23 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
                                                              └── core/edit.py (правки з GUI)
 ```
 - `core/models.py` — Catalog, Plan, Segment, Shot. **Змінювати формат Plan обережно**: збільшити PLAN_VERSION і додати міграцію в `Plan.from_dict`.
-- `core/brief.py` — читання ТЗ. Слоти: `clip`+start/end | `find: фраза` | `any: true`; + title, duration, subtitles, from.
+- `core/brief.py` — читання ТЗ (`load_brief` / `brief_from_text` / `parse_brief`) і запис `brief_to_yaml` (для форми).
+  Слоти: `clip`+start/end | `find: фраза` | `any: true`; + title, duration, subtitles, from. `clip` може бути ID з КАТАЛОГ.csv.
+  Верхній рівень: + `folders` (підпапки гри), `overlay` (текст на весь ролик), `notes` (вільний текст замовника).
+- `core/library.py` — папка гри після каталогізатора: `КАТАЛОГ.csv` (id;…;dest;proxy;text), `_для монтажу/тексти/<ID>.txt`
+  (`[хв:сек-хв:сек] текст`), `proxy/<ID>.mp4` (480p, ті самі таймкоди). Аналіз сцен іде по проксі, транскрипт — з txt
+  (порожній txt = мови немає, Whisper не запускається). Ніколи не беруться `05_*`, `06_*`, `_*`, `*Фото*`.
 - `analyze/catalog.py` — один прохід ffmpeg: сцени, тиша, яскравість/сек, прев'ю. Кеш: `<source>/.memocut/catalog.json` (перерахунок за mtime+size).
-- `analyze/transcribe.py` — `<clip>.words.json` → `<clip>.srt` → faster-whisper.
+- `analyze/transcribe.py` — `<clip>.words.json` → `<clip>.srt` → `тексти/<ID>.txt` гри → faster-whisper.
 - `planner/rules.py` — кандидати на слот з оцінкою; варіації беруть різні кандидати; решта → `Segment.alternatives`.
 - `planner/base.py:get_planner` — точка підключення `planner/ai.py` (рівень 3, Claude API). Має повертати той самий `list[Plan]`.
 - `render/engine.py` — кожен сегмент рендериться окремо, кеш за хешем (`.memocut/render_cache`), склейка concat без перекодування. ffmpeg запускається з `cwd=cache`, щоб уникнути екранування Windows-шляхів у фільтрі subtitles.
 - `render/ass.py` — заголовки/субтитри/фінальна картка. Координати завжди 1080-базові (PlayRes), прев'ю = половина роздільності.
 - `core/edit.py` — чисті функції правок (повертають новий Plan, revision+1). GUI має викликати лише їх.
 - `core/project.py` — повний цикл, ним користуються CLI і GUI.
-- `gui/` (PySide6): `main_window.py` (QStackedWidget: ТЗ → прогрес → галерея), `start_page.py`, `progress_page.py`,
+- `gui/` (PySide6): `main_window.py` (QStackedWidget: ТЗ → прогрес → галерея), `brief_page.py` (форма ТЗ + вкладка YAML;
+  обидві працюють з одним dict як у файлі; ТЗ зберігається в `<гра>/MemoCut/ТЗ/`, результати в `<гра>/MemoCut/Результати/`;
+  чернетка форми в QSettings `draft_yaml`), `progress_page.py`,
   `gallery.py` (картки варіацій з QMediaPlayer + черга фінальних рендерів), `workers.py` (Job у QThread).
   **Сигнали з Job підключати лише до методів віджетів, не до лямбд** — інакше слот виконається у фоновому потоці.
   Скасування: `Cancelled(BaseException)` кидається з колбеку прогресу. `VariationCard.release()` — відпустити
@@ -38,7 +45,8 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 
 ## Дорожня карта
 1. ✅ Ядро: аналіз, планувальник за правилами, рендер, правки, CLI, збірка .exe
-2. ✅ GUI (PySide6): вікно ТЗ (нещодавні, вибір стилю/кількості варіацій) → прогрес (журнал, ETA, скасування)
+2. ✅ GUI (PySide6): ТЗ у програмі — форма (папка гри з підпапками, сцени/хук, тексти, музика, вільний текст) +
+   вкладка YAML (зберегти/відкрити/передати); папка гри MemoGames (каталог, транскрипти, проксі); overlay-текст; → прогрес (журнал, ETA, скасування)
    → галерея прев'ю (QMediaPlayer, грає одне відео), «Експорт MP4» чергою, «Відкрити готові результати».
    Перевірено на Linux offscreen + зібраний PyInstaller-бандл; на Windows ще не запускали.
 3. ⬜ Редактор (кнопка «Редагувати» в картці вже є, вимкнена; сигнал `edit_requested(folder)`): стрічка сегментів з мініатюрами, панель альтернатив, «Вибрати файл», повзунок обрізки, текст заголовка, Відмінити (history/)

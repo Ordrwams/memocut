@@ -56,6 +56,7 @@ def header(w: int, h: int, style: dict) -> str:
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         _style_line("Title", font, style["title"]),
         _style_line("Sub", font, style["subtitles"]),
+        _style_line("Overlay", font, style["overlay"]),
         _style_line("End", font, {**style["end_card"], "outline": 0, "outline_color": "#000000",
                                   "bold": True, "position": "center", "margin_v": 0}),
         "", "[Events]",
@@ -87,9 +88,12 @@ def word_groups(words, max_words: int, gap: float = 0.6):
         yield group
 
 
-def segment_ass(seg: Segment, clip: ClipInfo | None, style: dict, w: int, h: int) -> str:
+def segment_ass(seg: Segment, clip: ClipInfo | None, style: dict, w: int, h: int,
+                overlay: str | None = None) -> str:
     dur = seg.shot.duration
     lines = [header(w, h, style)]
+    if overlay:  # рендериться в кожному сегменті — у склейці виглядає як один напис
+        lines.append(f"Dialogue: 2,{ts(0)},{ts(dur)},Overlay,,0,0,0,,{esc(overlay)}")
     tst = style["title"]
     if seg.title:
         text = seg.title.upper() if tst.get("uppercase") else seg.title

@@ -13,7 +13,7 @@ from typing import Optional
 import json
 from pathlib import Path
 
-PLAN_VERSION = 1
+PLAN_VERSION = 2  # 2: + Plan.overlay
 
 
 # ---------- Каталог (результат аналізу) ----------
@@ -106,6 +106,7 @@ class Plan:
     cta: Optional[str] = None
     music: Optional[str] = None
     music_volume: float = 0.15
+    overlay: Optional[str] = None  # текст поверх усього відео (v2)
     planner: str = "rules"
     version: int = PLAN_VERSION
     revision: int = 1      # номер правки; редактор збільшує
@@ -126,6 +127,8 @@ class Plan:
             s["shot"] = Shot(**s["shot"])
             s["alternatives"] = [Shot(**a) for a in s.get("alternatives", [])]
             segs.append(Segment(**s))
+        d.setdefault("overlay", None)  # міграція v1 -> v2
+        d["version"] = PLAN_VERSION
         return Plan(segments=segs, **d)
 
     def save(self, path: Path) -> None:

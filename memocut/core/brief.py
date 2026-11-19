@@ -5,6 +5,11 @@
   - find: "фраза"                      -> шукати фразу в транскрипті
   - any: true                          -> будь-який якісний фрагмент
 Додатково: title, duration, subtitles, from (обмежити пошук файлами за маскою).
+clip може бути ID з КАТАЛОГ.csv папки гри (напр. "LUB-UA-041").
+
+Верхній рівень: name, source_dir, folders (підпапки гри), format, style, variations,
+overlay (текст на весь ролик), cta, music, music_volume, notes.
+ТЗ можна зібрати у формі програми: brief_to_yaml() пише файл, parse_brief() читає дані.
 """
 from __future__ import annotations
 
@@ -39,6 +44,8 @@ class Brief:
     music: Optional[str] = None
     music_volume: float = 0.15
     notes: Optional[str] = None  # вільний текст ТЗ (поки ігнорується; для ШІ-планувальника)
+    overlay: Optional[str] = None  # текст поверх усього відео
+    folders: Optional[list[str]] = None  # підпапки source_dir, з яких брати відео (None = усі)
     base_dir: Path = Path(".")
 
     def source_path(self) -> Path:
@@ -55,8 +62,28 @@ FORMATS = {"9x16", "1x1", "16x9", "4x5"}
 
 def load_brief(path: str | Path) -> Brief:
     path = Path(path)
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if "source_dir" not in data:
+    return parse_brief(_load_yaml(path.read_text(encoding="utf-8-sig")), path.parent, path.stem)
+
+
+def brief_from_text(text: str, base_dir: str | Path = ".", default_name: str = "Відео") -> Brief:
+    """Те саме, що load_brief, але з тексту (вкладка YAML у програмі)."""
+    return parse_brief(_load_yaml(text), Path(base_dir), default_name)
+
+
+def _load_yaml(text: str) -> dict:
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" (рядок {mark.line + 1})" if mark else ""
+        raise BriefError(f"Помилка у файлі ТЗ{where}: {getattr(e, 'problem', None) or e}") from None
+    if not isinstance(data, dict):
+        raise BriefError("ТЗ має бути набором полів (name:, source_dir:, segments: …)")
+    return data
+
+
+def parse_brief(data: dict, base_dir: Path, default_name: str = "Відео") -> Brief:
+    if not data.get("source_dir"):
         raise BriefError("У ТЗ немає поля source_dir (папка з сирими відео)")
     slots = []
     for i, raw in enumerate(data.get("segments") or [], 1):
@@ -78,7 +105,7 @@ def load_brief(path: str | Path) -> Brief:
     if fmt not in FORMATS:
         raise BriefError(f"Формат {fmt} не підтримується. Доступні: {sorted(FORMATS)}")
     return Brief(
-        name=str(data.get("name") or path.stem),
+        name=str(data.get("name") or default_name),
         source_dir=str(data["source_dir"]),
         format=fmt,
         style=str(data.get("style", "couples_warm")),
@@ -88,5 +115,78 @@ def load_brief(path: str | Path) -> Brief:
         music=data.get("music"),
         music_volume=float(data.get("music_volume", 0.15)),
         notes=data.get("notes"),
-        base_dir=path.parent.resolve(),
+        overlay=(str(data["overlay"]).strip() or None) if data.get("overlay") else None,
+        folders=[str(f) for f in data["folders"]] if data.get("folders") else None,
+        base_dir=Path(base_dir).resolve(),
     )
+
+
+# ---- запис ТЗ у YAML (з форми програми) ----
+
+def _q(v) -> str:
+    """Одне значення YAML в один рядок (рядки в лапках, якщо треба)."""
+    if isinstance(v, str):
+        if "\n" in v:  # лише тут потрібні подвійні лапки з екрануванням
+            return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+        return "'" + v.replace("'", "''") + "'"  # одинарні: шляхи з \ читаються як є
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if v is None:
+        return "null"
+    if isinstance(v, float):
+        return f"{v:g}"
+    return str(v)
+
+
+SLOT_ORDER = ["find", "any", "clip", "start", "end", "from", "title", "duration", "subtitles"]
+
+
+def brief_to_yaml(d: dict) -> str:
+    """Словник ТЗ (як у файлі) -> читабельний YAML з коментарями. Порожні поля пропускаються."""
+    L = ["# ТЗ на відео для MemoCut. Можна редагувати в програмі (вкладка «Форма») або тут.", ""]
+
+    def put(key, comment=""):
+        v = d.get(key)
+        if v in (None, "", []):
+            return
+        L.append(f"{key}: {_q(v)}" + (f"    # {comment}" if comment else ""))
+
+    put("name", "назва ролика")
+    put("source_dir", "папка гри або папка з відео")
+    if d.get("folders"):
+        L.append("folders:                # з яких підпапок брати відео")
+        L += [f"  - {_q(f)}" for f in d["folders"]]
+    put("format", "9x16 | 1x1 | 4x5 | 16x9")
+    put("style", "файл зі styles/")
+    put("variations", "скільки різних варіантів змонтувати")
+    L.append("")
+    L.append("segments:               # сцени по порядку; перша — хук")
+    for i, seg in enumerate(d.get("segments") or [], 1):
+        keys = [k for k in SLOT_ORDER if k in seg] + [k for k in seg if k not in SLOT_ORDER]
+        first = True
+        for k in keys:
+            v = seg[k]
+            if v is None or (k == "subtitles" and v is True) or (k == "any" and not v):
+                continue
+            prefix = "  - " if first else "    "
+            note = f"    # {i}. {'хук' if i == 1 else 'сцена'}" if first else ""
+            L.append(f"{prefix}{k}: {_q(v)}{note}")
+            first = False
+        if first:  # порожня сцена
+            L.append(f"  - any: true    # {i}")
+    L.append("")
+    put("overlay", "текст поверх усього відео")
+    put("cta", "фінальна картка")
+    put("music", "файл музики")
+    if d.get("music"):
+        put("music_volume")
+    if d.get("notes"):
+        L.append("")
+        L.append("notes: |               # вільний текст ТЗ (для довідки)")
+        L += ["  " + ln if ln.strip() else "" for ln in str(d["notes"]).rstrip().splitlines()]
+    return "\n".join(L).rstrip() + "\n"
+
+
+def load_brief_data(path: str | Path) -> dict:
+    """Сирі дані ТЗ з файлу (для заповнення форми)."""
+    return _load_yaml(Path(path).read_text(encoding="utf-8-sig"))
