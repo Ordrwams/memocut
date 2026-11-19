@@ -19,6 +19,14 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 - `render/ass.py` — заголовки/субтитри/фінальна картка. Координати завжди 1080-базові (PlayRes), прев'ю = половина роздільності.
 - `core/edit.py` — чисті функції правок (повертають новий Plan, revision+1). GUI має викликати лише їх.
 - `core/project.py` — повний цикл, ним користуються CLI і GUI.
+- `gui/` (PySide6): `main_window.py` (QStackedWidget: ТЗ → прогрес → галерея), `start_page.py`, `progress_page.py`,
+  `gallery.py` (картки варіацій з QMediaPlayer + черга фінальних рендерів), `workers.py` (Job у QThread).
+  **Сигнали з Job підключати лише до методів віджетів, не до лямбд** — інакше слот виконається у фоновому потоці.
+  Скасування: `Cancelled(BaseException)` кидається з колбеку прогресу. `VariationCard.release()` — відпустити
+  файл перед перерендером (Windows блокує відкрите відео). QAudioOutput створюється при першому Play.
+- `app.py` / `memocut.spec`: один код → два exe: `MemoCut.exe` (вікно) і `memocut-cli.exe` (консоль).
+  Аргумент-команда (`run`, `show`…) → CLI, шлях до .yaml → вікно з відкритим ТЗ.
+- `.github/workflows/build-windows.yml` — тести (offscreen) → PyInstaller → FFmpeg BtbN → `MemoCut-windows.zip`.
 - `styles/*.yaml` — пресети; відсутні поля беруться з `core/style.py:DEFAULT`. Користувацькі стилі поруч із .exe мають пріоритет.
 
 ## Правила
@@ -26,11 +34,14 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 - Windows: шляхи через pathlib, subprocess без вікна (`core/proc.py`), ffmpeg.exe у `ffmpeg/` поруч із програмою.
 - Нові поля стилю — спершу в `DEFAULT`, потім використання в `render/ass.py`.
 - Після змін рендеру підняти `"v"` у `Renderer._key`, щоб скинути кеш.
-- Перевірка: `python -m pytest tests` і `python -m memocut run tests/...` на тестових кліпах (див. tests/make_test_clips.py).
+- Перевірка: `QT_QPA_PLATFORM=offscreen python -m pytest tests` і `python -m memocut run tests/...` на тестових кліпах (див. tests/make_test_clips.py).
 
 ## Дорожня карта
 1. ✅ Ядро: аналіз, планувальник за правилами, рендер, правки, CLI, збірка .exe
-2. ⬜ GUI (PySide6): вікно ТЗ → прогрес → галерея 3 прев'ю (QMediaPlayer)
-3. ⬜ Редактор: стрічка сегментів з мініатюрами, панель альтернатив, «Вибрати файл», повзунок обрізки, текст заголовка, Відмінити (history/)
-4. ⬜ Фінальний експорт, черга рендерів
+2. ✅ GUI (PySide6): вікно ТЗ (нещодавні, вибір стилю/кількості варіацій) → прогрес (журнал, ETA, скасування)
+   → галерея прев'ю (QMediaPlayer, грає одне відео), «Експорт MP4» чергою, «Відкрити готові результати».
+   Перевірено на Linux offscreen + зібраний PyInstaller-бандл; на Windows ще не запускали.
+3. ⬜ Редактор (кнопка «Редагувати» в картці вже є, вимкнена; сигнал `edit_requested(folder)`): стрічка сегментів з мініатюрами, панель альтернатив, «Вибрати файл», повзунок обрізки, текст заголовка, Відмінити (history/)
+4. ◐ Фінальний експорт, черга рендерів — базова черга є в `gallery.py`; лишилось: вибір папки/імені експорту,
+   кілька ТЗ у черзі, скасування окремого елемента
 5. ⬜ Рівень 3: `planner/ai.py` (Claude API, вільний текст ТЗ у `notes`), приклади з history/ як few-shot

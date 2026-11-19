@@ -28,9 +28,15 @@ def safe_name(s: str) -> str:
 
 def generate(brief_path: str | Path, out_dir: str | Path | None = None, *, preview: bool = True,
              transcripts: bool = True, planner: str = "rules",
+             style: str | None = None, variations: int | None = None,
              progress: Optional[Progress] = None) -> list[Path]:
+    """style / variations — перевизначення з GUI (якщо None, береться з ТЗ)."""
     say = progress or (lambda m, f: None)
     brief = load_brief(brief_path)
+    if style:
+        brief.style = style
+    if variations:
+        brief.variations = int(variations)
     catalog = analyze(brief.source_path(), transcripts=transcripts,
                       progress=lambda m, f: say(m, f * 0.4))
     plans = get_planner(planner).make_plans(brief, catalog)
@@ -46,6 +52,22 @@ def generate(brief_path: str | Path, out_dir: str | Path | None = None, *, previ
         results.append(folder)
     say("Готово", 1.0)
     return results
+
+
+def output_root(brief_path: str | Path, out_dir: str | Path | None = None) -> Path:
+    """Папка з результатами для ТЗ (там, де generate створить var1, var2, ...)."""
+    brief = load_brief(brief_path)
+    root = Path(out_dir) if out_dir else Path(brief_path).parent / "output"
+    return root / safe_name(brief.name)
+
+
+def list_variations(root: str | Path) -> list[Path]:
+    """Готові варіації в папці результатів (var1, var2, ...), відсортовані за номером."""
+    root = Path(root)
+    found = [p for p in root.glob("var*") if (p / "plan.json").is_file()]
+    if (root / "plan.json").is_file():  # вибрали саму папку варіації
+        found = [root]
+    return sorted(found, key=lambda p: int(re.sub(r"\D", "", p.name) or 0))
 
 
 def load_variation(folder: Path) -> tuple[Plan, Catalog]:

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+build/
+dist/
+ffmpeg/
+tests/_clips/
+tests/output/
+.memocut/
+.pytest_cache/
