@@ -27,7 +27,11 @@ jobs:
       - name: Тести
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q tests
+        shell: pwsh
+        run: |
+          python -X faulthandler -m pytest -q tests
+          Write-Host "Код виходу pytest: $LASTEXITCODE"
+          exit $LASTEXITCODE
 
       - name: Завантажити FFmpeg (BtbN, win64 GPL)
         shell: pwsh

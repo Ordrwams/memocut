@@ -7,15 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from memocut.core import project  # noqa: E402
 from memocut.core.models import Plan, Segment, Shot  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
@@ -28,9 +22,10 @@ def _plan(i):
                 segments=[Segment("s1", Shot("A.mp4", 0, 2), title="Привіт")])
 
 
-def test_start_page(app, settings, tmp_path):
+def test_start_page(app, cleanup, settings, tmp_path):
     from memocut.gui.start_page import StartPage
     page = StartPage(settings)
+    cleanup.append(page)
     (tmp_path / "raw").mkdir()
     good = tmp_path / "b.yaml"
     good.write_text("name: Промо\nsource_dir: raw\nstyle: minimal_box\nvariations: 2\n"
@@ -63,13 +58,14 @@ def test_list_variations(tmp_path):
     assert project.list_variations(tmp_path / "var2") == [tmp_path / "var2"]
 
 
-def test_gallery_cards(app, tmp_path):
+def test_gallery_cards(app, cleanup, tmp_path):
     from memocut.gui.gallery import GalleryPage, load_results, video_size
     for i in (1, 2, 3):
         _plan(i).save(tmp_path / "out" / f"var{i}" / "plan.json")
     folders, title = load_results(tmp_path / "out")
     assert len(folders) == 3 and title == "Тест"
     g = GalleryPage()
+    cleanup.append(g)
     g.show_results(folders, title)
     assert [c.head.text() for c in g.cards] == ["Варіація 1", "Варіація 2", "Варіація 3"]
     assert "s1: A.mp4 0.0–2.0 «Привіт»" in g.cards[0].segs.text()
