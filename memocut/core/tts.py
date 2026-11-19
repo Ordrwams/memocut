@@ -57,11 +57,17 @@ def _request(path: str, api_key: str, body: Optional[dict] = None, timeout: floa
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        status = ""
         try:
             detail = json.loads(e.read().decode("utf-8")).get("detail")
             msg = detail.get("message") if isinstance(detail, dict) else detail
+            status = (detail.get("status") or "") if isinstance(detail, dict) else ""
         except Exception:
             msg = None
+        if "permission" in f"{status} {msg}".lower():
+            need = "Voices → Read" if "voices" in path else "Text to Speech → Access"
+            raise TTSError("Ключу ElevenLabs бракує дозволу. На elevenlabs.io → API Keys → цей ключ → "
+                           f"увімкніть «{need}» і збережіть.\n(Відповідь ElevenLabs: {msg})") from None
         if e.code == 401:
             raise TTSError("ElevenLabs не прийняв API-ключ. Перевірте його в Налаштуваннях.") from None
         if e.code == 402 or (msg and "quota" in str(msg).lower()):

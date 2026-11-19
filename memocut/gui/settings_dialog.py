@@ -45,6 +45,8 @@ class SettingsDialog(QDialog):
         head = QLabel("ElevenLabs — озвучка (voice-over)")
         head.setObjectName("h2")
         hint = QLabel("Ключ: elevenlabs.io → профіль (ліворуч унизу) → <b>API Keys</b> → Create API Key. "
+                      "Якщо ключ обмежений (Restrict Key), увімкніть <b>Text to Speech → Access</b> і "
+                      "<b>Voices → Read</b>. "
                       "Ключ зберігається лише на цьому комп'ютері й не потрапляє у файл ТЗ. "
                       "Озвучка витрачає кредити ElevenLabs; той самий текст повторно не озвучується (кеш).")
         hint.setObjectName("muted")

@@ -25,6 +25,9 @@ class Fake(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.headers.get("xi-api-key") == "restricted":
+            return self._send(401, {"detail": {"status": "missing_permissions",
+                                               "message": "The API key you used is missing the permission voices_read"}})
         if self.headers.get("xi-api-key") != "good":
             return self._send(401, {"detail": {"message": "invalid key"}})
         self._send(200, {"voices": [{"voice_id": "v2", "name": "Rachel", "labels": {"gender": "female"}},
@@ -54,6 +57,8 @@ def test_voices_and_bad_key(server):
     assert [v["name"] for v in tts.list_voices("good")] == ["adam", "Rachel"]
     with pytest.raises(tts.TTSError, match="не прийняв"):
         tts.list_voices("bad")
+    with pytest.raises(tts.TTSError, match="Voices → Read"):
+        tts.list_voices("restricted")
     with pytest.raises(tts.TTSError, match="API-ключ"):
         tts.list_voices("")
 
