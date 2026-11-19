@@ -22,6 +22,7 @@ from ..core.brief import BriefError, brief_to_yaml, brief_from_text, load_brief_
 from ..core.library import GameFolder
 from ..core.project import safe_name
 from ..core.style import list_styles
+from .settings_dialog import cached_voices, tts_config
 
 MAX_RECENT = 8
 FORMATS = [("9x16", "9:16 — Reels / TikTok / Shorts"), ("4x5", "4:5 — стрічка Instagram"),
@@ -98,8 +99,12 @@ class SceneRow(QFrame):
         self.down.clicked.connect(lambda: self.move_requested.emit(self, 1))
         self.rm.clicked.connect(lambda: self.remove_requested.emit(self))
 
+        self.look = QLineEdit()
+        self.look.setPlaceholderText("Що має бути в кадрі, напр. «коробка, картки крупно» — шукаю в описах КАТАЛОГу")
+        self.look.setToolTip("Програма порівнює ці слова з описами відео в КАТАЛОГ.csv і бере найсхожіші.\n"
+                             "На екран цей текст НЕ виводиться.")
         self.title = QLineEdit()
-        self.title.setPlaceholderText("Текст на екрані в цій сцені (необов'язково)")
+        self.title.setPlaceholderText("Напис, який з'явиться на відео (необов'язково)")
         self.duration = _seconds(60)
         self.duration.setToolTip("Тривалість сцени. «авто» — програма вирішить сама")
         self.subs = QCheckBox("субтитри")
@@ -121,17 +126,20 @@ class SceneRow(QFrame):
         for b in (self.up, self.down, self.rm):
             btns.addWidget(b)
         g.addLayout(btns, 0, 3)
-        g.addWidget(QLabel("Текст:"), 1, 0, Qt.AlignRight)
+        self.look_label = QLabel("Що в кадрі:")
+        g.addWidget(self.look_label, 1, 0, Qt.AlignRight)
+        g.addWidget(self.look, 1, 1, 1, 3)
+        g.addWidget(QLabel("Напис:"), 2, 0, Qt.AlignRight)
         bottom = QHBoxLayout()
         bottom.addWidget(self.title, 1)
         bottom.addWidget(QLabel("Тривалість:"))
         bottom.addWidget(self.duration)
         bottom.addWidget(self.subs)
-        g.addLayout(bottom, 1, 1, 1, 3)
+        g.addLayout(bottom, 2, 1, 1, 3)
         g.setColumnStretch(2, 1)
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
-        for w in (self.value, self.title):
+        for w in (self.value, self.title, self.look):
             w.textChanged.connect(self.changed)
         for w in (self.start, self.end, self.duration):
             w.valueChanged.connect(self.changed)
@@ -153,6 +161,8 @@ class SceneRow(QFrame):
         self.value.setPlaceholderText(
             "Напр. «ми так сміялися» — знайду в транскриптах" if k == "find" else "LUB-UA-041 або IMG_0412.MOV")
         self.duration.setVisible(not clip)
+        self.look.setVisible(not clip)
+        self.look_label.setVisible(not clip)
         self.changed.emit()
 
     def _pick_file(self) -> None:
@@ -188,6 +198,8 @@ class SceneRow(QFrame):
             if self.end.value() > 0:
                 d["end"] = round(self.end.value(), 2)
         d.update(self.extra)
+        if k != "clip" and self.look.text().strip():
+            d["look"] = self.look.text().strip()
         if self.title.text().strip():
             d["title"] = self.title.text().strip().replace(" | ", "\n")
         if self.duration.value() > 0 and k != "clip":
@@ -204,6 +216,7 @@ class SceneRow(QFrame):
         d.pop("any", None)
         self.start.setValue(float(d.pop("start", 0) or 0))
         self.end.setValue(float(d.pop("end", 0) or 0))
+        self.look.setText(str(d.pop("look", "") or ""))
         self.title.setText(str(d.pop("title", "") or "").replace("\n", " | "))
         self.duration.setValue(float(d.pop("duration", 0) or 0))
         self.subs.setChecked(bool(d.pop("subtitles", True)))
@@ -243,11 +256,15 @@ class BriefPage(QWidget):
         results_btn = QPushButton("Змонтовані раніше…")
         results_btn.setToolTip("Подивитися відео, які вже змонтовані раніше (без повторного монтажу)")
         results_btn.clicked.connect(self._pick_results)
+        settings_btn = QPushButton("⚙ Налаштування")
+        settings_btn.setToolTip("Підключення сервісів: ElevenLabs (озвучка)")
+        settings_btn.clicked.connect(self.open_settings)
         bar = QHBoxLayout()
         for w in (open_btn, self.recent_btn, save_btn, new_btn):
             bar.addWidget(w)
         bar.addStretch()
         bar.addWidget(results_btn)
+        bar.addWidget(settings_btn)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_form(), "ТЗ")
@@ -347,8 +364,8 @@ class BriefPage(QWidget):
 
         # 3. Сцени
         c, l = _card("3. Сцени (по порядку)",
-                     "Перша сцена — хук. Для кожної: що показати і, за бажанням, текст на екрані. "
-                     "Щоб розбити текст на два рядки, поставте « | ».")
+                     "Перша сцена — хук. «Що в кадрі» — опис для пошуку потрібного відео (на екран не виводиться). "
+                     "«Напис» — текст, який буде на відео; два рядки — через « | ».")
         self.scenes_lay = QVBoxLayout()
         self.scenes_lay.setSpacing(6)
         l.addLayout(self.scenes_lay)
@@ -377,8 +394,49 @@ class BriefPage(QWidget):
         l.addLayout(form)
         col.addWidget(c)
 
-        # 5. Музика
-        c, l = _card("5. Музика (необов'язково)")
+        # 5. Озвучка
+        c, l = _card("5. Озвучка — voice-over (необов'язково)",
+                     "Текст начитає голос ElevenLabs. Сцени підлаштуються під довжину озвучки, "
+                     "а субтитри підуть за голосом.")
+        self.vo_text = QPlainTextEdit()
+        self.vo_text.setPlaceholderText("Текст для озвучки. Напр.: «Teach your kid to ask questions before they "
+                                        "learn to believe everything they hear…»")
+        self.vo_text.setMinimumHeight(90)
+        l.addWidget(self.vo_text)
+        row = QHBoxLayout()
+        self.vo_voice = QComboBox()
+        self.vo_voice.setMinimumWidth(260)
+        self.vo_listen = QPushButton("Озвучити й прослухати")
+        self.vo_listen.setToolTip("Згенерувати озвучку зараз (витрачає кредити один раз; при монтажі візьметься готова)")
+        self.vo_listen.clicked.connect(self._listen)
+        row.addWidget(QLabel("Голос:"))
+        row.addWidget(self.vo_voice, 1)
+        row.addWidget(self.vo_listen)
+        l.addLayout(row)
+        row = QHBoxLayout()
+        self.vo_subs = QCheckBox("Субтитри з озвучки")
+        self.vo_subs.setChecked(True)
+        self.vo_fit = QCheckBox("Підігнати тривалість сцен під озвучку")
+        self.vo_fit.setChecked(True)
+        self.orig_vol = QSpinBox()
+        self.orig_vol.setRange(0, 100)
+        self.orig_vol.setValue(20)
+        self.orig_vol.setSuffix(" %")
+        self.orig_vol.setToolTip("Гучність звуку з самих відео, поки звучить озвучка")
+        row.addWidget(self.vo_subs)
+        row.addWidget(self.vo_fit)
+        row.addStretch()
+        row.addWidget(QLabel("Звук з відео:"))
+        row.addWidget(self.orig_vol)
+        l.addLayout(row)
+        self.vo_status = QLabel()
+        self.vo_status.setWordWrap(True)
+        l.addWidget(self.vo_status)
+        col.addWidget(c)
+        self._player = None
+
+        # 6. Музика
+        c, l = _card("6. Музика (необов'язково)")
         row = QHBoxLayout()
         self.music = QLineEdit()
         self.music.setPlaceholderText("Без музики")
@@ -400,8 +458,8 @@ class BriefPage(QWidget):
         l.addLayout(row)
         col.addWidget(c)
 
-        # 6. Вільний текст
-        c, l = _card("6. ТЗ від замовника (вільний текст)",
+        # 7. Вільний текст
+        c, l = _card("7. ТЗ від замовника (вільний текст)",
                      "Вставте сюди ТЗ як є — воно збережеться у файлі ТЗ, щоб було під рукою. "
                      "Програма його не читає: перенесіть потрібне в розділи вище.")
         self.notes = QPlainTextEdit()
@@ -529,6 +587,13 @@ class BriefPage(QWidget):
         for key, w in (("overlay", self.overlay), ("cta", self.cta)):
             if w.text().strip():
                 d[key] = w.text().strip()
+        if self.vo_text.toPlainText().strip():
+            d["voiceover"] = self.vo_text.toPlainText().strip() + "\n"
+            if self.vo_voice.currentData():
+                d["voice"] = self.vo_voice.currentData()
+            d["voice_subtitles"] = self.vo_subs.isChecked()
+            d["fit_voiceover"] = self.vo_fit.isChecked()
+            d["original_volume"] = round(self.orig_vol.value() / 100, 2)
         if self.music.text():
             d["music"] = self.music.text()
             d["music_volume"] = round(self.music_vol.value() / 100, 2)
@@ -537,7 +602,8 @@ class BriefPage(QWidget):
         return d
 
     KNOWN = {"name", "source_dir", "folders", "format", "style", "variations", "segments",
-             "overlay", "cta", "music", "music_volume", "notes"}
+             "overlay", "cta", "music", "music_volume", "notes", "voiceover", "voice",
+             "voice_subtitles", "fit_voiceover", "original_volume"}
 
     def set_form_data(self, d: dict) -> None:
         self._loading = True
@@ -570,6 +636,12 @@ class BriefPage(QWidget):
             self.music.setText(str(d.get("music") or ""))
             self.music_vol.setValue(int(round(float(d.get("music_volume", 0.15) or 0.15) * 100)))
             self.notes.setPlainText(str(d.get("notes") or "").rstrip())
+            self.vo_text.setPlainText(str(d.get("voiceover") or "").rstrip())
+            self.fill_voices(str(d.get("voice") or ""))
+            self.vo_subs.setChecked(bool(d.get("voice_subtitles", True)))
+            self.vo_fit.setChecked(bool(d.get("fit_voiceover", True)))
+            ov = d.get("original_volume")
+            self.orig_vol.setValue(int(round(float(ov) * 100)) if ov is not None else 20)
         finally:
             self._loading = False
 
@@ -779,6 +851,12 @@ class BriefPage(QWidget):
                 if r.kind.currentData() == "clip" and v and "." not in Path(v).name \
                         and self.game.resolve_clip(v) == v:
                     return f"Сцена {i}: ID «{v}» немає в КАТАЛОГ.csv цієї гри."
+        if self.vo_text.toPlainText().strip():
+            cfg = tts_config(self.settings)
+            if not cfg.api_key:
+                return "Для озвучки потрібен API-ключ ElevenLabs: ⚙ Налаштування."
+            if not (self.vo_voice.currentData() or cfg.voice_id):
+                return "Виберіть голос для озвучки (розділ 5 або ⚙ Налаштування)."
         try:
             parse_brief(self.form_data(), self._source)
         except (BriefError, ValueError, TypeError) as e:
@@ -799,4 +877,71 @@ class BriefPage(QWidget):
             return
         self.save_draft()
         self.start_requested.emit(path, {"out_dir": base / "Результати",
-                                         "transcripts": self.whisper.isChecked()})
+                                         "transcripts": self.whisper.isChecked(),
+                                         "tts": tts_config(self.settings)})
+
+    # ================= озвучка / налаштування =================
+    def open_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+        if SettingsDialog(self.settings, self).exec():
+            self.fill_voices(self.vo_voice.currentData() or "")
+
+    def fill_voices(self, current: str = "") -> None:
+        cfg = tts_config(self.settings)
+        self.vo_voice.clear()
+        default = next((v["name"] for v in cached_voices(self.settings) if v["voice_id"] == cfg.voice_id), None)
+        self.vo_voice.addItem(f"З Налаштувань ({default})" if default else "З Налаштувань", "")
+        for v in cached_voices(self.settings):
+            self.vo_voice.addItem(v["name"] + (f"  ({v['info']})" if v.get("info") else ""), v["voice_id"])
+        if current:
+            i = self.vo_voice.findData(current)
+            if i < 0:
+                self.vo_voice.addItem(f"voice_id {current}", current)
+                i = self.vo_voice.count() - 1
+            self.vo_voice.setCurrentIndex(i)
+        self.vo_status.setText("" if cfg.api_key else
+                               "Щоб озвучувати, додайте API-ключ ElevenLabs: кнопка «⚙ Налаштування» вгорі.")
+
+    def _listen(self) -> None:
+        text = self.vo_text.toPlainText().strip()
+        if not text:
+            self.vo_status.setText("Впишіть текст озвучки.")
+            return
+        if not self._source:
+            self.vo_status.setText("Спершу виберіть папку гри (розділ 1) — туди збережеться озвучка.")
+            return
+        from .workers import Job, start_job
+        cfg = tts_config(self.settings)
+        self.vo_listen.setEnabled(False)
+        self.vo_status.setText("Озвучую…")
+        job = Job(_synth_job, text, cfg, project_base(self._source) / "озвучка", self.vo_voice.currentData() or None)
+        job.finished.connect(self._listen_ok)
+        job.failed.connect(self._listen_fail)
+        self._vo_job = job
+        start_job(self, job)
+
+    def _listen_ok(self, res) -> None:
+        mp3, dur = res
+        self.vo_listen.setEnabled(True)
+        self.vo_status.setText(f"✓ Озвучка {dur:.1f} с. Відео буде приблизно такої ж довжини."
+                               f"  Файл: {mp3.name}")
+        from PySide6.QtCore import QUrl
+        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+        if self._player is None:
+            self._player = QMediaPlayer(self)
+            self._audio = QAudioOutput(self)
+            self._player.setAudioOutput(self._audio)
+        self._player.stop()
+        self._player.setSource(QUrl.fromLocalFile(str(mp3)))
+        self._player.play()
+
+    def _listen_fail(self, msg: str, _tb: str) -> None:
+        self.vo_listen.setEnabled(True)
+        self.vo_status.setText(f"⚠ {msg}")
+
+
+def _synth_job(text, cfg, out_dir, voice, progress=None):
+    from ..core.project import audio_duration
+    from ..core.tts import synthesize
+    mp3, _words = synthesize(text, cfg, out_dir, voice)
+    return mp3, audio_duration(mp3)

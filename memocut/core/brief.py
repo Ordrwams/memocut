@@ -4,7 +4,8 @@
   - clip: "IMG_01.mp4" + start/end     -> точний шматок
   - find: "фраза"                      -> шукати фразу в транскрипті
   - any: true                          -> будь-який якісний фрагмент
-Додатково: title, duration, subtitles, from (обмежити пошук файлами за маскою).
+Додатково: look (що в кадрі — пошук в описах КАТАЛОГу), title (напис на екрані), duration, subtitles,
+from (обмежити пошук файлами за маскою).
 clip може бути ID з КАТАЛОГ.csv папки гри (напр. "LUB-UA-041").
 
 Верхній рівень: name, source_dir, folders (підпапки гри), format, style, variations,
@@ -30,6 +31,7 @@ class Slot:
     title: Optional[str] = None
     subtitles: bool = True
     from_: Optional[str] = None  # glob-маска файлів, напр. "IMG_04*"
+    look: Optional[str] = None   # що має бути в кадрі — шукається в описах КАТАЛОГу гри
 
 
 @dataclass
@@ -46,6 +48,12 @@ class Brief:
     notes: Optional[str] = None  # вільний текст ТЗ (поки ігнорується; для ШІ-планувальника)
     overlay: Optional[str] = None  # текст поверх усього відео
     folders: Optional[list[str]] = None  # підпапки source_dir, з яких брати відео (None = усі)
+    voiceover: Optional[str] = None      # текст озвучки (ElevenLabs)
+    voice: Optional[str] = None          # voice_id ElevenLabs (None = голос з Налаштувань)
+    voice_volume: float = 1.0
+    voice_subtitles: bool = True         # субтитри з озвучки (замість субтитрів з мови відео)
+    fit_voiceover: bool = True           # підігнати тривалість сцен під довжину озвучки
+    original_volume: Optional[float] = None  # гучність звуку з відео (None: 0.2 з озвучкою, 1.0 без)
     base_dir: Path = Path(".")
 
     def source_path(self) -> Path:
@@ -117,6 +125,12 @@ def parse_brief(data: dict, base_dir: Path, default_name: str = "Відео") ->
         notes=data.get("notes"),
         overlay=(str(data["overlay"]).strip() or None) if data.get("overlay") else None,
         folders=[str(f) for f in data["folders"]] if data.get("folders") else None,
+        voiceover=(str(data["voiceover"]).strip() or None) if data.get("voiceover") else None,
+        voice=str(data["voice"]) if data.get("voice") else None,
+        voice_volume=float(data.get("voice_volume", 1.0)),
+        voice_subtitles=bool(data.get("voice_subtitles", True)),
+        fit_voiceover=bool(data.get("fit_voiceover", True)),
+        original_volume=float(data["original_volume"]) if data.get("original_volume") is not None else None,
         base_dir=Path(base_dir).resolve(),
     )
 
@@ -138,7 +152,7 @@ def _q(v) -> str:
     return str(v)
 
 
-SLOT_ORDER = ["find", "any", "clip", "start", "end", "from", "title", "duration", "subtitles"]
+SLOT_ORDER = ["find", "any", "clip", "start", "end", "look", "from", "title", "duration", "subtitles"]
 
 
 def brief_to_yaml(d: dict) -> str:
@@ -147,7 +161,7 @@ def brief_to_yaml(d: dict) -> str:
 
     def put(key, comment=""):
         v = d.get(key)
-        if v in (None, "", []):
+        if v is None or (isinstance(v, (str, list)) and not v):
             return
         L.append(f"{key}: {_q(v)}" + (f"    # {comment}" if comment else ""))
 
@@ -175,6 +189,15 @@ def brief_to_yaml(d: dict) -> str:
         if first:  # порожня сцена
             L.append(f"  - any: true    # {i}")
     L.append("")
+    if d.get("voiceover"):
+        L.append("voiceover: |           # текст озвучки (ElevenLabs)")
+        L += ["  " + ln if ln.strip() else "" for ln in str(d["voiceover"]).rstrip().splitlines()]
+        put("voice", "голос ElevenLabs (voice_id); порожньо = з Налаштувань")
+        for k, c in (("voice_subtitles", "субтитри з озвучки"), ("fit_voiceover", "підігнати сцени під озвучку"),
+                     ("original_volume", "гучність звуку з відео, 0..1"), ("voice_volume", "гучність озвучки")):
+            if k in d:
+                put(k, c)
+        L.append("")
     put("overlay", "текст поверх усього відео")
     put("cta", "фінальна картка")
     put("music", "файл музики")

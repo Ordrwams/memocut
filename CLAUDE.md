@@ -12,7 +12,9 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 - `core/models.py` — Catalog, Plan, Segment, Shot. **Змінювати формат Plan обережно**: збільшити PLAN_VERSION і додати міграцію в `Plan.from_dict`.
 - `core/brief.py` — читання ТЗ (`load_brief` / `brief_from_text` / `parse_brief`) і запис `brief_to_yaml` (для форми).
   Слоти: `clip`+start/end | `find: фраза` | `any: true`; + title, duration, subtitles, from. `clip` може бути ID з КАТАЛОГ.csv.
-  Верхній рівень: + `folders` (підпапки гри), `overlay` (текст на весь ролик), `notes` (вільний текст замовника).
+  Верхній рівень: + `folders` (підпапки гри), `overlay` (текст на весь ролик), `notes` (вільний текст замовника),
+  озвучка: `voiceover`, `voice`, `voice_subtitles`, `fit_voiceover`, `original_volume`, `voice_volume`.
+  Слот `look` — «що в кадрі»: збіг слів з `ClipInfo.desc` (опис з КАТАЛОГ.csv) піднімає кандидата (`planner/rules.py:look_score`).
 - `core/library.py` — папка гри після каталогізатора: `КАТАЛОГ.csv` (id;…;dest;proxy;text), `_для монтажу/тексти/<ID>.txt`
   (`[хв:сек-хв:сек] текст`), `proxy/<ID>.mp4` (480p, ті самі таймкоди). Аналіз сцен іде по проксі, транскрипт — з txt
   (порожній txt = мови немає, Whisper не запускається). Ніколи не беруться `05_*`, `06_*`, `_*`, `*Фото*`.
@@ -23,11 +25,15 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 - `render/engine.py` — кожен сегмент рендериться окремо, кеш за хешем (`.memocut/render_cache`), склейка concat без перекодування. ffmpeg запускається з `cwd=cache`, щоб уникнути екранування Windows-шляхів у фільтрі subtitles.
 - `render/ass.py` — заголовки/субтитри/фінальна картка. Координати завжди 1080-базові (PlayRes), прев'ю = половина роздільності.
 - `core/edit.py` — чисті функції правок (повертають новий Plan, revision+1). GUI має викликати лише їх.
-- `core/project.py` — повний цикл, ним користуються CLI і GUI.
+- `core/project.py` — повний цикл, ним користуються CLI і GUI. З озвучкою: synthesize → `fit_slots` (гнучкі сцени під
+  довжину) → планування → `extend_to` (дотягнути кліпи) → Plan.voiceover*. Рендер: субтитри озвучки нарізаються по
+  сегментах (VO_DELAY), фінальне зведення: звук відео × original_volume + озвучка + музика.
+- `core/tts.py` — ElevenLabs: `/v1/voices`, `/v1/text-to-speech/{voice}/with-timestamps` (таймкоди символів → слова).
 - `gui/` (PySide6): `main_window.py` (QStackedWidget: ТЗ → прогрес → галерея), `brief_page.py` (форма ТЗ + вкладка YAML;
   обидві працюють з одним dict як у файлі; ТЗ зберігається в `<гра>/MemoCut/ТЗ/`, результати в `<гра>/MemoCut/Результати/`;
   чернетка форми в QSettings `draft_yaml`), `progress_page.py`,
-  `gallery.py` (картки варіацій з QMediaPlayer + черга фінальних рендерів), `workers.py` (Job у QThread).
+  `gallery.py` (картки варіацій з QMediaPlayer + черга фінальних рендерів), `workers.py` (Job у QThread),
+  `settings_dialog.py` (⚙ Налаштування: ключ/модель/голос ElevenLabs, список голосів кешується в QSettings).
   **Сигнали з Job підключати лише до методів віджетів, не до лямбд** — інакше слот виконається у фоновому потоці.
   Скасування: `Cancelled(BaseException)` кидається з колбеку прогресу. `VariationCard.release()` — відпустити
   файл перед перерендером (Windows блокує відкрите відео). QAudioOutput створюється при першому Play.
@@ -37,7 +43,10 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 - `styles/*.yaml` — пресети; відсутні поля беруться з `core/style.py:DEFAULT`. Користувацькі стилі поруч із .exe мають пріоритет.
 
 ## Правила
-- Без ШІ в робочому циклі. Все локально, офлайн.
+- Без ШІ в робочому циклі. Все локально, офлайн — крім опційної озвучки ElevenLabs (`core/tts.py`), лише коли в ТЗ є
+  `voiceover`. Ключ — у QSettings (`elevenlabs/*`) або `ELEVENLABS_API_KEY`, ніколи в ТЗ. Озвучка кешується в `<гра>/MemoCut/озвучка/`.
+- ffmpeg у збірці — свіжий BtbN master: він суворіший за системні (напр. порожній вихід `-f null` = помилка).
+  Інтеграційний тест `tests/test_ffmpeg.py` у CI запускається саме на ньому.
 - Windows: шляхи через pathlib, subprocess без вікна (`core/proc.py`), ffmpeg.exe у `ffmpeg/` поруч із програмою.
 - Нові поля стилю — спершу в `DEFAULT`, потім використання в `render/ass.py`.
 - Після змін рендеру підняти `"v"` у `Renderer._key`, щоб скинути кеш.
@@ -46,7 +55,8 @@ brief.yaml ──► analyze/ ──► catalog.json ──► planner/ ──�
 ## Дорожня карта
 1. ✅ Ядро: аналіз, планувальник за правилами, рендер, правки, CLI, збірка .exe
 2. ✅ GUI (PySide6): ТЗ у програмі — форма (папка гри з підпапками, сцени/хук, тексти, музика, вільний текст) +
-   вкладка YAML (зберегти/відкрити/передати); папка гри MemoGames (каталог, транскрипти, проксі); overlay-текст; → прогрес (журнал, ETA, скасування)
+   вкладка YAML (зберегти/відкрити/передати); папка гри MemoGames (каталог, транскрипти, проксі); overlay-текст;
+   «Що в кадрі» (пошук по описах каталогу); озвучка ElevenLabs (⚙ Налаштування, прослухати, субтитри з озвучки); → прогрес (журнал, ETA, скасування)
    → галерея прев'ю (QMediaPlayer, грає одне відео), «Експорт MP4» чергою, «Відкрити готові результати».
    Перевірено на Linux offscreen + зібраний PyInstaller-бандл; на Windows ще не запускали.
 3. ⬜ Редактор (кнопка «Редагувати» в картці вже є, вимкнена; сигнал `edit_requested(folder)`): стрічка сегментів з мініатюрами, панель альтернатив, «Вибрати файл», повзунок обрізки, текст заголовка, Відмінити (history/)

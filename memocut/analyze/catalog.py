@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from ..core import paths
 from ..core.models import Catalog, ClipInfo, Word
-from ..core.proc import run
+from ..core.proc import FFmpegError, run
 from ..core.library import GameFolder, skip_dir
 from . import transcribe
 
@@ -63,7 +63,9 @@ def detect(path: Path, has_audio: bool, duration: float,
            scene_threshold: float = 0.32) -> tuple[list[float], list[list[float]], list[float]]:
     """Один прохід ffmpeg: склейки + яскравість (1/сек) + тиша."""
     fc = ("[0:v]scale=192:-2,split=2[a][b];"
-          f"[a]select='gt(scene,{scene_threshold})',metadata=print:key=lavfi.scene_score[sa];"
+          # eq(n,0): перший кадр проходить завжди — інакше у відео без склейок цей вихід порожній,
+          # і нові ffmpeg падають з «Could not open encoder before EOF». Поріг перевіряємо нижче.
+          f"[a]select='eq(n\\,0)+gt(scene\\,{scene_threshold})',metadata=print:key=lavfi.scene_score[sa];"
           "[b]fps=1,signalstats,metadata=print:key=lavfi.signalstats.YAVG[sb]")
     args = [paths.ffmpeg(), "-hide_banner", "-nostats", "-i", str(path), "-filter_complex"]
     if has_audio:
@@ -72,7 +74,11 @@ def detect(path: Path, has_audio: bool, duration: float,
                  "-map", "[aa]", "-f", "null", "-"]
     else:
         args += [fc, "-map", "[sa]", "-f", "null", "-", "-map", "[sb]", "-f", "null", "-"]
-    err = run(args).stderr
+    p = run(args, check=False)
+    err = p.stderr
+    if p.returncode != 0 and "lavfi.signalstats.YAVG" not in err:
+        tail = "\n".join(err.strip().splitlines()[-8:])
+        raise FFmpegError(f"Не вдалося проаналізувати відео:\n{tail}")
 
     scenes, bright, silences = [], [], []
     last_t = None
@@ -85,7 +91,8 @@ def detect(path: Path, has_audio: bool, duration: float,
         m = _KV.search(line)
         if m and last_t is not None:
             if m.group(1) == "lavfi.scene_score":
-                scenes.append(round(last_t, 3))
+                if float(m.group(2)) > scene_threshold and last_t > 0:
+                    scenes.append(round(last_t, 3))
             elif m.group(1) == "lavfi.signalstats.YAVG":
                 bright.append(round(float(m.group(2)), 1))
             continue
@@ -147,6 +154,7 @@ def analyze(source: str | Path, *, transcripts: bool = True, folders: Optional[l
         st = f.stat()
         prev = old.get(rel)
         if prev and prev.mtime == st.st_mtime and prev.size == st.st_size and (prev.words or not transcripts or not info_has_audio(prev)):
+            prev.desc = (game.entries[grel(f)].desc if game and grel(f) in game.entries else "")
             clips.append(prev)
             continue
         say(f"Аналіз {rel}", i / max(1, len(files)))
@@ -160,7 +168,19 @@ def analyze(source: str | Path, *, transcripts: bool = True, folders: Optional[l
         else:
             # Проксі 480p з папки гри має ті самі таймкоди, але аналізується в рази швидше.
             src = (game.proxy(grel(f)) if game else None) or f
-            scenes, silences, bright = detect(src, info["has_audio"], info["duration"])
+            try:
+                scenes, silences, bright = detect(src, info["has_audio"], info["duration"])
+            except Exception as e:  # один проблемний файл не зупиняє монтаж: беремо без аналізу сцен
+                if src != f:
+                    try:
+                        scenes, silences, bright = detect(f, info["has_audio"], info["duration"])
+                    except Exception:
+                        scenes, silences, bright = [], [], []
+                else:
+                    scenes, silences, bright = [], [], []
+                if not bright:
+                    say(f"Увага: {rel} — не вдалося проаналізувати ({str(e).splitlines()[0]})",
+                        i / max(1, len(files)))
             thumb = thumbs / (re.sub(r"[^\w.-]", "_", rel) + ".jpg")
             make_thumb(src, thumb, min(1.0, info["duration"] / 2))
             clip = ClipInfo(file=rel, mtime=st.st_mtime, size=st.st_size, scenes=scenes,
@@ -172,6 +192,7 @@ def analyze(source: str | Path, *, transcripts: bool = True, folders: Optional[l
                 f, whisper=transcripts,
                 timed_txt=game.transcript(grel(f)) if game else None,
                 known_empty=game.has_transcript_file(grel(f)) if game else False)]
+        clip.desc = (game.entries[grel(f)].desc if game and grel(f) in game.entries else "")
         clips.append(clip)
         Catalog(str(source), clips + [c for c in old.clips if c.file not in {x.file for x in clips}]).save(cat_path)
 

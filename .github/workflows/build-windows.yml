@@ -24,15 +24,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pytest
 
-      - name: Тести
-        env:
-          QT_QPA_PLATFORM: offscreen
-        shell: pwsh
-        run: |
-          python -X faulthandler -m pytest -q tests
-          Write-Host "Код виходу pytest: $LASTEXITCODE"
-          exit $LASTEXITCODE
-
       - name: Завантажити FFmpeg (BtbN, win64 GPL)
         shell: pwsh
         run: |
@@ -43,6 +34,16 @@ jobs:
           New-Item -ItemType Directory -Force ffmpeg | Out-Null
           Copy-Item $bin.FullName ffmpeg\
           Copy-Item (Join-Path $bin.DirectoryName "ffprobe.exe") ffmpeg\
+          Add-Content $env:GITHUB_PATH "$PWD\ffmpeg"   # тести беруть той самий ffmpeg, що йде в програму
+
+      - name: Тести
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: pwsh
+        run: |
+          python -X faulthandler -m pytest -q tests
+          Write-Host "Код виходу pytest: $LASTEXITCODE"
+          exit $LASTEXITCODE
 
       - name: Зібрати .exe
         run: pyinstaller --noconfirm memocut.spec

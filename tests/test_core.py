@@ -96,3 +96,13 @@ def test_ass(catalog):
     assert "Style: Title,Montserrat,82" in text
     assert "Привіт (світ)" in text
     assert text.count(",Sub,") >= 3
+
+
+def test_look_prefers_matching_description(tmp_path, catalog):
+    from memocut.planner.rules import look_score
+    assert look_score("руки відкривають коробку", "Руки відкривають кришку коробки, показують вміст") == 1.0
+    assert look_score("дитина читає картку", "Зелена коробка з усіх боків") == 0.0
+    catalog.get("C.mp4").desc = "Фіолетові картки з твердженнями крупно"
+    b = write_brief(tmp_path, "source_dir: x\nsegments:\n - any: true\n   look: 'картки крупно'\n   duration: 2\n")
+    plan = RulesPlanner().make_plans(b, catalog)[0]
+    assert plan.segments[0].shot.file == "C.mp4" and plan.segments[0].title is None

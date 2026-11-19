@@ -89,7 +89,8 @@ def word_groups(words, max_words: int, gap: float = 0.6):
 
 
 def segment_ass(seg: Segment, clip: ClipInfo | None, style: dict, w: int, h: int,
-                overlay: str | None = None) -> str:
+                overlay: str | None = None, vo_words: list | None = None) -> str:
+    """vo_words — слова озвучки вже в часі сегмента (0..dur); якщо задані, замінюють субтитри з мови відео."""
     dur = seg.shot.duration
     lines = [header(w, h, style)]
     if overlay:  # рендериться в кожному сегменті — у склейці виглядає як один напис
@@ -100,27 +101,35 @@ def segment_ass(seg: Segment, clip: ClipInfo | None, style: dict, w: int, h: int
         lines.append(f"Dialogue: 1,{ts(0)},{ts(dur)},Title,,0,0,0,,{_anim(tst.get('animation', 'fade'))}{esc(text)}")
 
     sst = style["subtitles"]
-    if seg.subtitles and clip and clip.words:
-        s0, s1 = seg.shot.start, seg.shot.end
-        words = [x for x in clip.words if x.e > s0 + 0.05 and x.s < s1 - 0.05]
-        groups = list(word_groups(words, int(sst.get("words_per_line", 4))))
-        hl = inline_color(sst.get("highlight_color", sst["color"]))
-        base = inline_color(sst["color"])
-        up = sst.get("uppercase")
-        for gi, g in enumerate(groups):
-            g_end = g[-1].e + 0.25
-            if gi + 1 < len(groups):
-                g_end = min(g_end, groups[gi + 1][0].s)
-            texts = [esc(x.w.upper() if up else x.w) for x in g]
-            if sst.get("karaoke", True):
-                for wi, wd in enumerate(g):
-                    a = wd.s if wi else g[0].s
-                    b = g[wi + 1].s if wi + 1 < len(g) else g_end
-                    parts = [(f"{{\\c{hl}}}{t}{{\\c{base}}}" if k == wi else t) for k, t in enumerate(texts)]
-                    lines.append(f"Dialogue: 0,{ts(a - s0)},{ts(min(b, s1) - s0)},Sub,,0,0,0,,{' '.join(parts)}")
-            else:
-                lines.append(f"Dialogue: 0,{ts(g[0].s - s0)},{ts(min(g_end, s1) - s0)},Sub,,0,0,0,,{' '.join(texts)}")
+    if vo_words is not None:
+        lines += _sub_lines(vo_words, 0.0, dur, sst)
+    elif seg.subtitles and clip and clip.words:
+        lines += _sub_lines(clip.words, seg.shot.start, seg.shot.end, sst)
     return "\n".join(lines) + "\n"
+
+
+def _sub_lines(all_words, s0: float, s1: float, sst: dict) -> list[str]:
+    """Караоке-субтитри для слів, що потрапляють у [s0, s1]; час — відносно s0."""
+    lines = []
+    words = [x for x in all_words if x.e > s0 + 0.05 and x.s < s1 - 0.05]
+    groups = list(word_groups(words, int(sst.get("words_per_line", 4))))
+    hl = inline_color(sst.get("highlight_color", sst["color"]))
+    base = inline_color(sst["color"])
+    up = sst.get("uppercase")
+    for gi, g in enumerate(groups):
+        g_end = g[-1].e + 0.25
+        if gi + 1 < len(groups):
+            g_end = min(g_end, groups[gi + 1][0].s)
+        texts = [esc(x.w.upper() if up else x.w) for x in g]
+        if sst.get("karaoke", True):
+            for wi, wd in enumerate(g):
+                a = wd.s if wi else g[0].s
+                b = g[wi + 1].s if wi + 1 < len(g) else g_end
+                parts = [(f"{{\\c{hl}}}{t}{{\\c{base}}}" if k == wi else t) for k, t in enumerate(texts)]
+                lines.append(f"Dialogue: 0,{ts(max(0.0, a - s0))},{ts(min(b, s1) - s0)},Sub,,0,0,0,,{' '.join(parts)}")
+        else:
+            lines.append(f"Dialogue: 0,{ts(max(0.0, g[0].s - s0))},{ts(min(g_end, s1) - s0)},Sub,,0,0,0,,{' '.join(texts)}")
+    return lines
 
 
 def end_card_ass(text: str, style: dict, w: int, h: int, dur: float) -> str:

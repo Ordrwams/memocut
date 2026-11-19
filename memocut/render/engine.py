@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..core import paths
-from ..core.models import Catalog, Plan, Segment
+from ..core.models import Catalog, Plan, Segment, Word
+from ..core.tts import VO_DELAY
 from ..core.proc import run
 from ..core.style import load_style
 from . import ass
@@ -50,20 +51,21 @@ class Renderer:
         self.say = progress or (lambda m, f: None)
 
     # ---- один сегмент ----
-    def _key(self, seg: Segment, style: dict, fmt: str, preview: bool, overlay: str | None = None) -> str:
+    def _key(self, seg: Segment, style: dict, fmt: str, preview: bool, overlay: str | None = None,
+             vo_words: list | None = None) -> str:
         clip = self.catalog.get(seg.shot.file)
         payload = {
             "shot": asdict(seg.shot) | {"score": 0, "reason": ""}, "title": seg.title, "sub": seg.subtitles,
-            "style": style, "fmt": fmt, "preview": preview, "overlay": overlay,
+            "style": style, "fmt": fmt, "preview": preview, "overlay": overlay, "vo": [asdict(w) for w in vo_words] if vo_words is not None else None,
             "clip": [clip.mtime, clip.size, [asdict(w) for w in clip.words
                                              if seg.shot.start - 1 < w.s < seg.shot.end + 1]] if clip else None,
-            "v": 4,
+            "v": 5,
         }
         return hashlib.sha1(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
     def render_segment(self, seg: Segment, style: dict, fmt: str, preview: bool,
-                       overlay: str | None = None) -> Path:
-        key = self._key(seg, style, fmt, preview, overlay)
+                       overlay: str | None = None, vo_words: list | None = None) -> Path:
+        key = self._key(seg, style, fmt, preview, overlay, vo_words)
         out = self.cache / f"seg_{key}.mp4"
         if out.exists():
             return out
@@ -73,7 +75,7 @@ class Renderer:
         w, h = out_size(fmt, preview)
         fw, fh = SIZES[fmt]
         ass_name = f"seg_{key}.ass"
-        (self.cache / ass_name).write_text(ass.segment_ass(seg, clip, style, fw, fh, overlay), encoding="utf-8")
+        (self.cache / ass_name).write_text(ass.segment_ass(seg, clip, style, fw, fh, overlay, vo_words), encoding="utf-8")
         dur = seg.shot.duration
         fps = style["video"]["fps"]
         vf = (f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,"
@@ -121,9 +123,17 @@ class Renderer:
         style = load_style(plan.style)
         parts = []
         n = len(plan.segments) + (1 if plan.cta else 0)
+        t = 0.0
+        vo_subs = bool(plan.voiceover and plan.voice_subtitles and plan.voiceover_words)
         for i, seg in enumerate(plan.segments):
             self.say(f"Сегмент {i + 1}/{len(plan.segments)}", i / (n + 1))
-            parts.append(self.render_segment(seg, style, plan.format, preview, plan.overlay))
+            vo = None
+            if vo_subs:  # слова озвучки, що звучать під час цього сегмента, у його власному часі
+                d = seg.shot.duration
+                vo = [Word(w.w, round(w.s + VO_DELAY - t, 3), round(w.e + VO_DELAY - t, 3))
+                      for w in plan.voiceover_words if w.e + VO_DELAY > t + 0.05 and w.s + VO_DELAY < t + d - 0.05]
+            parts.append(self.render_segment(seg, style, plan.format, preview, plan.overlay, vo))
+            t += seg.shot.duration
         if plan.cta:
             self.say("Фінальна картка", len(plan.segments) / (n + 1))
             parts.append(self.render_end_card(plan.cta, style, plan.format, preview))
@@ -139,19 +149,41 @@ class Renderer:
         lst.unlink(missing_ok=True)
 
         music = self._music_path(plan)
-        if music:
+        voice = self._voice_path(plan)
+        if music or voice or abs(plan.original_volume - 1.0) > 1e-3:
+            # Зведення: звук з відео (приглушений під озвучку) + озвучка + музика.
             total = plan.duration + (style["end_card"]["duration"] if plan.cta else 0)
-            fc = (f"[1:a]volume={plan.music_volume},afade=t=in:d=0.5,"
-                  f"afade=t=out:st={max(0, total - 1.5):.2f}:d=1.5[m];"
-                  "[0:a][m]amix=inputs=2:duration=first:normalize=0[a]")
-            run([paths.ffmpeg(), "-y", "-v", "error", "-i", str(joined), "-stream_loop", "-1", "-i", str(music),
-                 "-filter_complex", fc, "-map", "0:v", "-map", "[a]", "-c:v", "copy", *_AENC,
-                 "-movflags", "+faststart", str(out_path)])
+            args = [paths.ffmpeg(), "-y", "-v", "error", "-i", str(joined)]
+            fc = [f"[0:a]volume={plan.original_volume:.3f}[o]"]
+            mix = ["[o]"]
+            if voice:
+                args += ["-i", str(voice)]
+                ms = int(VO_DELAY * 1000)
+                fc.append(f"[{sum(1 for a in args if a == '-i') - 1}:a]aresample=48000,aformat=channel_layouts=stereo,"
+                          f"volume={plan.voice_volume:.3f},adelay={ms}|{ms}[vo]")
+                mix.append("[vo]")
+            if music:
+                args += ["-stream_loop", "-1", "-i", str(music)]
+                idx = sum(1 for a in args if a == "-i") - 1
+                fc.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={plan.music_volume},"
+                          f"afade=t=in:d=0.5,afade=t=out:st={max(0, total - 1.5):.2f}:d=1.5[m]")
+                mix.append("[m]")
+            fc.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:normalize=0[a]")
+            run(args + ["-filter_complex", ";".join(fc), "-map", "0:v", "-map", "[a]", "-c:v", "copy", *_AENC,
+                        "-movflags", "+faststart", str(out_path)])
             joined.unlink(missing_ok=True)
         else:
             shutil.move(str(joined), str(out_path))
         self.say("Готово", 1.0)
         return out_path
+
+    def _voice_path(self, plan: Plan) -> Optional[Path]:
+        if not plan.voiceover:
+            return None
+        p = Path(plan.voiceover)
+        if not p.is_file():
+            raise FileNotFoundError(f"Файл озвучки не знайдено: {p}. Змонтуйте ТЗ заново, щоб озвучити ще раз.")
+        return p
 
     def _music_path(self, plan: Plan) -> Optional[Path]:
         if not plan.music:

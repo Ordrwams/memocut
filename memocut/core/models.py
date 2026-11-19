@@ -13,7 +13,7 @@ from typing import Optional
 import json
 from pathlib import Path
 
-PLAN_VERSION = 2  # 2: + Plan.overlay
+PLAN_VERSION = 3  # 2: + Plan.overlay; 3: + озвучка
 
 
 # ---------- Каталог (результат аналізу) ----------
@@ -40,6 +40,7 @@ class ClipInfo:
     brightness: list[float] = field(default_factory=list)      # середня яскравість 0..255, 1 значення/сек
     words: list[Word] = field(default_factory=list)            # транскрипт по словах
     thumb: Optional[str] = None                                # прев'ю-кадр (шлях у кеші)
+    desc: str = ""                                             # опис з КАТАЛОГ.csv гри (що в кадрі)
 
     @staticmethod
     def from_dict(d: dict) -> "ClipInfo":
@@ -107,6 +108,11 @@ class Plan:
     music: Optional[str] = None
     music_volume: float = 0.15
     overlay: Optional[str] = None  # текст поверх усього відео (v2)
+    voiceover: Optional[str] = None          # mp3 озвучки (v3)
+    voiceover_words: list[Word] = field(default_factory=list)  # таймкоди слів озвучки (від її початку)
+    voice_volume: float = 1.0
+    voice_subtitles: bool = True
+    original_volume: float = 1.0             # гучність звуку з відео
     planner: str = "rules"
     version: int = PLAN_VERSION
     revision: int = 1      # номер правки; редактор збільшує
@@ -128,6 +134,7 @@ class Plan:
             s["alternatives"] = [Shot(**a) for a in s.get("alternatives", [])]
             segs.append(Segment(**s))
         d.setdefault("overlay", None)  # міграція v1 -> v2
+        d["voiceover_words"] = [Word(**w) for w in d.get("voiceover_words", [])]  # v3
         d["version"] = PLAN_VERSION
         return Plan(segments=segs, **d)
 

@@ -67,9 +67,9 @@ def start_job(parent: QObject, job: Job) -> QThread:
 
 # ---- готові задачі ----
 
-def generate_job(brief: Path, *, out_dir: Path | None = None, transcripts: bool = True) -> Job:
+def generate_job(brief: Path, *, out_dir: Path | None = None, transcripts: bool = True, tts=None) -> Job:
     from ..core import project
-    return Job(project.generate, brief, out_dir, transcripts=transcripts)
+    return Job(project.generate, brief, out_dir, transcripts=transcripts, tts=tts)
 
 
 def final_job(folder: Path) -> Job:

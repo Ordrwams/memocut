@@ -4,7 +4,7 @@ from pathlib import Path
 from memocut.analyze.catalog import list_videos
 from memocut.core.brief import brief_from_text, brief_to_yaml
 from memocut.core.library import GameFolder, words_from_timed_txt
-from memocut.core.models import Plan, Segment, Shot
+from memocut.core.models import PLAN_VERSION, Plan, Segment, Shot
 from memocut.core.style import load_style
 from memocut.render.ass import segment_ass
 
@@ -79,4 +79,4 @@ def test_overlay_and_plan_migration(tmp_path):
     d.pop("overlay")
     d["version"] = 1
     p2 = Plan.from_dict(d)                                  # старий plan.json відкривається
-    assert p2.overlay is None and p2.version == 2
+    assert p2.overlay is None and p2.voiceover is None and p2.version == PLAN_VERSION

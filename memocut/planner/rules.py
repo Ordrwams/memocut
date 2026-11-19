@@ -144,7 +144,37 @@ def phrase_candidates(clip: ClipInfo, phrase: str, dur: float | None) -> list[Sh
     return out
 
 
+STOP = {"для", "або", "потім", "щоб", "який", "яка", "яке", "які", "його", "її", "цей", "ця", "там", "тут"}
+
+
+def look_score(look: str, desc: str) -> float:
+    """Яка частка слів із «Що в кадрі» є в описі кліпу (0..1). Грубо, з урахуванням закінчень."""
+    want = [t for t in norm_tokens(look) if len(t) >= 3 and t not in STOP]
+    have = [t for t in norm_tokens(desc) if len(t) >= 3]
+    if not want or not have:
+        return 0.0
+    return sum(1 for w in want if any(stem_eq(w, h) for h in have)) / len(want)
+
+
+def _apply_look(shots: list[Shot], slot: Slot, catalog: Catalog) -> list[Shot]:
+    """Підняти кандидатів, чий опис у КАТАЛОГу схожий на «Що в кадрі»."""
+    if not slot.look:
+        return shots
+    for sh in shots:
+        c = catalog.get(sh.file)
+        ls = look_score(slot.look, c.desc if c else "")
+        if ls > 0:
+            sh.score = round(sh.score + 1.5 * ls, 3)
+            sh.reason = f"{sh.reason}; опис схожий на «{slot.look}» ({int(ls * 100)}%)"
+    return sorted(shots, key=lambda x: -x.score)
+
+
 def slot_candidates(slot: Slot, catalog: Catalog) -> list[Shot]:
+    return _apply_look(_slot_candidates(slot, catalog), slot, catalog) if not slot.clip \
+        else _slot_candidates(slot, catalog)
+
+
+def _slot_candidates(slot: Slot, catalog: Catalog) -> list[Shot]:
     clips = _filter(catalog.clips, slot.from_)
     if slot.clip:
         c = catalog.get(slot.clip) or next((x for x in catalog.clips if x.file.endswith(slot.clip)), None)
