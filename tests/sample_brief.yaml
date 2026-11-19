@@ -1,0 +1,16 @@
+name: "Ігри для пар — тест"
+source_dir: _clips/raw
+format: 9x16
+style: couples_warm
+variations: 3
+segments:
+  - find: "так сміялися"
+    title: "Гра, яка зблизить вас"
+    duration: 3
+  - any: true
+    duration: 2.5
+  - clip: IMG_0101.mp4
+    start: 7.0
+    end: 9.0
+    title: "Раджу всім парам"
+cta: "Замовляй на memogames.ua"

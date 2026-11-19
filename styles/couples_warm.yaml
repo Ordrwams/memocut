@@ -1,0 +1,40 @@
+# Стиль «Ігри для пар» — теплий, рожево-малиновий акцент.
+# Скопіюйте файл під новою назвою, щоб зробити свій стиль.
+# Кольори — #RRGGBB. Розміри — у пікселях для ширини 1080.
+font: Montserrat
+
+title:
+  size: 82
+  bold: true
+  color: "#FFFFFF"
+  outline_color: "#C2185B"
+  outline: 6
+  shadow: 0
+  position: top          # top | center | bottom
+  margin_v: 260
+  animation: pop         # fade | pop | slide | none
+  uppercase: false
+  box: false
+
+subtitles:
+  size: 60
+  bold: true
+  color: "#FFFFFF"
+  highlight_color: "#FFD54F"   # підсвітка поточного слова
+  outline_color: "#000000"
+  outline: 4
+  shadow: 1
+  position: bottom
+  margin_v: 420
+  words_per_line: 4
+  karaoke: true
+  uppercase: false
+
+end_card:
+  background: "#C2185B"
+  color: "#FFFFFF"
+  size: 76
+  duration: 2.5
+
+video:
+  fps: 30
